@@ -1,0 +1,26 @@
+[
+  {
+    "id": "tpl-001",
+    "name": "Order Confirmation",
+    "type": "order_confirmation",
+    "body": "Dear {{customerName}},\n\nYour order #{{orderNumber}} has been confirmed at {{businessName}}.\n\nOrder Total: {{orderTotal}}\nPayment Method: {{paymentMethod}}\nPayment Status: {{paymentStatus}}\n\nWe will notify you once your order is ready.\n\nThank you for shopping with us!\n\nWarm regards,\n{{businessName}}"
+  },
+  {
+    "id": "tpl-002",
+    "name": "Payment Confirmation",
+    "type": "payment_confirmation",
+    "body": "Dear {{customerName}},\n\nWe have received your payment of {{orderTotal}} for order #{{orderNumber}} at {{businessName}}.\n\nYour order is now being processed.\n\nThank you!\n\nWarm regards,\n{{businessName}}"
+  },
+  {
+    "id": "tpl-003",
+    "name": "Thank You for Purchase",
+    "type": "thank_you",
+    "body": "Dear {{customerName}},\n\nThank you so much for your patronage at {{businessName}}! 🎉\n\nYour order #{{orderNumber}} has been completed successfully.\n\nWe truly appreciate your continued trust and support. We look forward to serving you again soon!\n\nWarm regards,\n{{businessName}}"
+  },
+  {
+    "id": "tpl-004",
+    "name": "Low Stock Alert",
+    "type": "low_stock_alert",
+    "body": "⚠️ LOW STOCK ALERT - {{businessName}}\n\nProduct: {{productName}}\nCurrent Stock: {{currentStock}} units\nThreshold: {{threshold}} units\n\nPlease restock soon to avoid running out.\n\n{{businessName}} Inventory System"
+  }
+]

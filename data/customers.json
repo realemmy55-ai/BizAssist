@@ -1,0 +1,50 @@
+[
+  {
+    "id": "cust-001",
+    "name": "Adaeze Okonkwo",
+    "phone": "08012345678",
+    "email": "adaeze.okonkwo@gmail.com",
+    "notes": "Prefers delivery. Repeat buyer of audio products.",
+    "createdAt": "2026-09-05T10:00:00.000Z"
+  },
+  {
+    "id": "cust-002",
+    "name": "Emeka Nwosu",
+    "phone": "07034567890",
+    "email": "emeka.nwosu@yahoo.com",
+    "notes": "Bulk buyer. Usually orders 5+ items.",
+    "createdAt": "2026-09-10T14:30:00.000Z"
+  },
+  {
+    "id": "cust-003",
+    "name": "Fatima Abdullahi",
+    "phone": "08098765432",
+    "email": "fatima.abdullahi@outlook.com",
+    "notes": "Referred by Emeka. Interested in power accessories.",
+    "createdAt": "2026-09-15T09:20:00.000Z"
+  },
+  {
+    "id": "cust-004",
+    "name": "Chukwuemeka Eze",
+    "phone": "09011223344",
+    "email": "ceze@gmail.com",
+    "notes": "Corporate client. Issues invoices.",
+    "createdAt": "2026-09-20T11:00:00.000Z"
+  },
+  {
+    "id": "cust-005",
+    "name": "Ngozi Bello",
+    "phone": "08155667788",
+    "email": "ngozi.bello@hotmail.com",
+    "notes": "Prefers bank transfer. Quick to pay.",
+    "createdAt": "2026-09-28T16:45:00.000Z"
+  },
+  {
+    "id": "cust-006",
+    "name": "Tunde Akinwale",
+    "phone": "07088990011",
+    "email": "tunde.akinwale@gmail.com",
+    "notes": "New customer. First order placed online.",
+    "createdAt": "2026-10-03T08:15:00.000Z"
+  }
+]

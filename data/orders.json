@@ -1,0 +1,125 @@
+[
+  {
+    "id": "ord-001",
+    "customerId": "cust-001",
+    "customerName": "Adaeze Okonkwo",
+    "items": [
+      {
+        "productId": "prod-007",
+        "productName": "Bluetooth Speaker",
+        "qty": 2,
+        "unitPrice": 18500
+      },
+      {
+        "productId": "prod-001",
+        "productName": "iPhone 14 Case",
+        "qty": 1,
+        "unitPrice": 5000
+      }
+    ],
+    "total": 42000,
+    "status": "completed",
+    "paymentStatus": "paid",
+    "paymentMethod": "bank_transfer",
+    "notes": "Deliver before 5pm",
+    "stockDeducted": true,
+    "saleId": "sale-001",
+    "createdAt": "2026-10-08T10:30:00.000Z"
+  },
+  {
+    "id": "ord-002",
+    "customerId": "cust-002",
+    "customerName": "Emeka Nwosu",
+    "items": [
+      {
+        "productId": "prod-005",
+        "productName": "Power Bank 20000mAh",
+        "qty": 3,
+        "unitPrice": 22000
+      },
+      {
+        "productId": "prod-008",
+        "productName": "HDMI Cable",
+        "qty": 5,
+        "unitPrice": 3500
+      }
+    ],
+    "total": 83500,
+    "status": "processing",
+    "paymentStatus": "part_paid",
+    "paymentMethod": "cash",
+    "notes": "Bulk order. Balance on delivery.",
+    "stockDeducted": false,
+    "saleId": null,
+    "createdAt": "2026-10-10T14:00:00.000Z"
+  },
+  {
+    "id": "ord-003",
+    "customerId": "cust-003",
+    "customerName": "Fatima Abdullahi",
+    "items": [
+      {
+        "productId": "prod-006",
+        "productName": "Wireless Charger",
+        "qty": 1,
+        "unitPrice": 9500
+      }
+    ],
+    "total": 9500,
+    "status": "confirmed",
+    "paymentStatus": "unpaid",
+    "paymentMethod": "bank_transfer",
+    "notes": "",
+    "stockDeducted": false,
+    "saleId": null,
+    "createdAt": "2026-10-12T09:15:00.000Z"
+  },
+  {
+    "id": "ord-004",
+    "customerId": "cust-004",
+    "customerName": "Chukwuemeka Eze",
+    "items": [
+      {
+        "productId": "prod-003",
+        "productName": "USB-C Hub",
+        "qty": 2,
+        "unitPrice": 15000
+      },
+      {
+        "productId": "prod-002",
+        "productName": "AirPods Clone",
+        "qty": 2,
+        "unitPrice": 12000
+      }
+    ],
+    "total": 54000,
+    "status": "confirmed",
+    "paymentStatus": "paid",
+    "paymentMethod": "transfer",
+    "notes": "Corporate invoice required.",
+    "stockDeducted": false,
+    "saleId": null,
+    "createdAt": "2026-10-12T16:30:00.000Z"
+  },
+  {
+    "id": "ord-005",
+    "customerId": "cust-005",
+    "customerName": "Ngozi Bello",
+    "items": [
+      {
+        "productId": "prod-004",
+        "productName": "Screen Protector",
+        "qty": 2,
+        "unitPrice": 2000
+      }
+    ],
+    "total": 4000,
+    "status": "cancelled",
+    "paymentStatus": "refunded",
+    "paymentMethod": "cash",
+    "notes": "Customer changed mind.",
+    "stockDeducted": false,
+    "saleId": null,
+    "createdAt": "2026-10-09T11:00:00.000Z"
+  }
+]

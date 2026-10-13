@@ -1,0 +1,74 @@
+[
+  {
+    "id": "mov-001",
+    "productId": "prod-007",
+    "productName": "Bluetooth Speaker",
+    "type": "deduction",
+    "quantity": 2,
+    "notes": "Sale sale-001",
+    "createdAt": "2026-10-08T10:45:00.000Z"
+  },
+  {
+    "id": "mov-002",
+    "productId": "prod-001",
+    "productName": "iPhone 14 Case",
+    "type": "deduction",
+    "quantity": 1,
+    "notes": "Sale sale-001",
+    "createdAt": "2026-10-08T10:45:00.000Z"
+  },
+  {
+    "id": "mov-003",
+    "productId": "prod-008",
+    "productName": "HDMI Cable",
+    "type": "deduction",
+    "quantity": 3,
+    "notes": "Sale sale-002",
+    "createdAt": "2026-10-09T13:20:00.000Z"
+  },
+  {
+    "id": "mov-004",
+    "productId": "prod-005",
+    "productName": "Power Bank 20000mAh",
+    "type": "addition",
+    "quantity": 5,
+    "notes": "Restocked from supplier",
+    "createdAt": "2026-10-07T08:00:00.000Z"
+  },
+  {
+    "id": "mov-005",
+    "productId": "prod-003",
+    "productName": "USB-C Hub",
+    "type": "deduction",
+    "quantity": 1,
+    "notes": "Sale sale-004",
+    "createdAt": "2026-10-13T09:00:00.000Z"
+  },
+  {
+    "id": "mov-006",
+    "productId": "prod-002",
+    "productName": "AirPods Clone",
+    "type": "addition",
+    "quantity": 10,
+    "notes": "New stock delivery",
+    "createdAt": "2026-10-01T10:00:00.000Z"
+  },
+  {
+    "id": "mov-7417972e",
+    "productId": "prod-006",
+    "productName": "Wireless Charger",
+    "type": "addition",
+    "quantity": 45,
+    "notes": "",
+    "createdAt": "2026-10-13T14:37:32.259Z"
+  },
+  {
+    "id": "mov-23254238",
+    "productId": "prod-008",
+    "productName": "HDMI Cable",
+    "type": "deduction",
+    "quantity": 14,
+    "notes": "Sale sale-9e5638ce",
+    "createdAt": "2026-10-13T15:07:00.584Z"
+  }
+]

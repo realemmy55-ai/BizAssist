@@ -1,0 +1,7 @@
+{
+  "businessName": "Cybrox Store",
+  "currency": "NGN",
+  "currencySymbol": "₦",
+  "lowStockThreshold": 5,
+  "theme": "dark"
+}

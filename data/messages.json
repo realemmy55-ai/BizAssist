@@ -1,0 +1,62 @@
+[
+  {
+    "id": "msg-001",
+    "customerId": "cust-001",
+    "customerName": "Adaeze Okonkwo",
+    "type": "thank_you",
+    "subject": "Thank You for Your Purchase!",
+    "body": "Dear Adaeze Okonkwo,\n\nThank you so much for your patronage at Cybrox Store! 🎉\n\nYour order #ord-001 has been completed successfully.\n\nWe truly appreciate your continued trust and support. We look forward to serving you again soon!\n\nWarm regards,\nCybrox Store",
+    "status": "simulated",
+    "saleId": "sale-001",
+    "orderId": "ord-001",
+    "createdAt": "2026-10-08T10:46:00.000Z"
+  },
+  {
+    "id": "msg-002",
+    "customerId": "cust-002",
+    "customerName": "Emeka Nwosu",
+    "type": "order_confirmation",
+    "subject": "Order Confirmation - #ord-002",
+    "body": "Dear Emeka Nwosu,\n\nYour order #ord-002 has been confirmed and is currently being processed.\n\nOrder Total: ₦83,500\nPayment Method: Cash\nPayment Status: Part Paid\n\nThank you for shopping with Cybrox Store!",
+    "status": "simulated",
+    "saleId": null,
+    "orderId": "ord-002",
+    "createdAt": "2026-10-10T14:05:00.000Z"
+  },
+  {
+    "id": "msg-003",
+    "customerId": "cust-006",
+    "customerName": "Tunde Akinwale",
+    "type": "thank_you",
+    "subject": "Thank You for Your Purchase!",
+    "body": "Dear Tunde Akinwale,\n\nThank you for your patronage at Cybrox Store! 🎉\n\nYour order has been completed successfully. We hope you enjoy your items!\n\nWarm regards,\nCybrox Store",
+    "status": "simulated",
+    "saleId": "sale-003",
+    "orderId": null,
+    "createdAt": "2026-10-10T10:01:00.000Z"
+  },
+  {
+    "id": "msg-08e9070b",
+    "customerId": "cust-002",
+    "customerName": "Emeka Nwosu",
+    "type": "custom",
+    "subject": "Message from Cybrox Store",
+    "body": "Dear Emeka Nwosu,\n\nThank you so much for your patronage at Cybrox Store! 🎉\n\nYour order #N/A has been completed successfully.\n\nWe truly appreciate your continued trust and support. We look forward to serving you again soon!\n\nWarm regards,\nCybrox Store",
+    "status": "simulated",
+    "saleId": null,
+    "orderId": null,
+    "createdAt": "2026-10-13T14:38:03.938Z"
+  },
+  {
+    "id": "msg-de51961a",
+    "customerId": "cust-006",
+    "customerName": "Tunde Akinwale",
+    "type": "thank_you",
+    "subject": "Thank You for Your Purchase!",
+    "body": "Dear Tunde Akinwale,\n\nThank you so much for your patronage at Cybrox Store! 🎉\n\nYour order #sale-9e5638ce has been completed successfully.\n\nWe truly appreciate your continued trust and support. We look forward to serving you again soon!\n\nWarm regards,\nCybrox Store",
+    "status": "simulated",
+    "saleId": "sale-9e5638ce",
+    "orderId": null,
+    "createdAt": "2026-10-13T15:07:00.606Z"
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "prod-001",
+    "name": "iPhone 14 Case",
+    "sku": "ACC-IP14-01",
+    "category": "Accessories",
+    "costPrice": 2500,
+    "sellingPrice": 5000,
+    "quantity": 18,
+    "lowStockThreshold": 5,
+    "description": "Shockproof liquid silicone case with microfibre lining.",
+    "createdAt": "2026-09-01T10:00:00.000Z"
+  },
+  {
+    "id": "prod-002",
+    "name": "AirPods Clone",
+    "sku": "AUD-APC-02",
+    "category": "Audio",
+    "costPrice": 6500,
+    "sellingPrice": 12000,
+    "quantity": 4,
+    "lowStockThreshold": 5,
+    "description": "True wireless stereo earbuds with pop-up pairing and charging case.",
+    "createdAt": "2026-09-05T11:30:00.000Z"
+  },
+  {
+    "id": "prod-003",
+    "name": "USB-C Hub",
+    "sku": "ACC-UCH-03",
+    "category": "Accessories",
+    "costPrice": 8000,
+    "sellingPrice": 15000,
+    "quantity": 12,
+    "lowStockThreshold": 5,
+    "description": "6-in-1 multi-port adapter with 4K HDMI, 100W PD, and USB 3.0 ports.",
+    "createdAt": "2026-09-10T09:15:00.000Z"
+  },
+  {
+    "id": "prod-004",
+    "name": "Screen Protector",
+    "sku": "ACC-SCP-04",
+    "category": "Accessories",
+    "costPrice": 800,
+    "sellingPrice": 2000,
+    "quantity": 3,
+    "lowStockThreshold": 5,
+    "description": "9H tempered glass screen protector with anti-scratch coating.",
+    "createdAt": "2026-09-12T14:20:00.000Z"
+  },
+  {
+    "id": "prod-005",
+    "name": "Power Bank 20000mAh",
+    "sku": "PWR-PB20-05",
+    "category": "Power",
+    "costPrice": 14000,
+    "sellingPrice": 22000,
+    "quantity": 9,
+    "lowStockThreshold": 5,
+    "description": "High-capacity fast charging portable power bank with dual outputs.",
+    "createdAt": "2026-09-15T08:45:00.000Z"
+  },
+  {
+    "id": "prod-006",
+    "name": "Wireless Charger",
+    "sku": "PWR-WLC-06",
+    "category": "Power",
+    "costPrice": 5500,
+    "sellingPrice": 9500,
+    "quantity": 47,
+    "lowStockThreshold": 5,
+    "description": "15W Qi-certified fast wireless charging pad with LED indicator.",
+    "createdAt": "2026-09-18T16:00:00.000Z"
+  },
+  {
+    "id": "prod-007",
+    "name": "Bluetooth Speaker",
+    "sku": "AUD-BTS-07",
+    "category": "Audio",
+    "costPrice": 11000,
+    "sellingPrice": 18500,
+    "quantity": 15,
+    "lowStockThreshold": 5,
+    "description": "Portable waterproof bluetooth speaker with deep bass and 12h playtime.",
+    "createdAt": "2026-09-20T12:00:00.000Z"
+  },
+  {
+    "id": "prod-008",
+    "name": "HDMI Cable",
+    "sku": "CBL-HDM-08",
+    "category": "Cables",
+    "costPrice": 1500,
+    "sellingPrice": 3500,
+    "quantity": 11,
+    "lowStockThreshold": 5,
+    "description": "Ultra high speed 2-meter braided 4K 60Hz HDMI cable.",
+    "createdAt": "2026-09-22T13:30:00.000Z"
+  }
+]
