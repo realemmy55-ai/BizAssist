@@ -21,22 +21,66 @@ function dataPath(file) {
 }
 
 function readData(file) {
+  const filePath = dataPath(file);
   try {
-    return JSON.parse(fs.readFileSync(dataPath(file), "utf8"));
-  } catch (e) {
-    return Array.isArray(JSON.parse(fs.readFileSync(dataPath(file), "utf8")))
+    const raw = fs.readFileSync(filePath, "utf8").trim();
+    if (!raw) {
+      return [
+        "products",
+        "customers",
+        "orders",
+        "sales",
+        "messages",
+        "stockMovements",
+        "messageTemplates",
+      ].includes(file)
+        ? []
+        : {};
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn(`Data read fallback for ${file}:`, error.message);
+    return [
+      "products",
+      "customers",
+      "orders",
+      "sales",
+      "messages",
+      "stockMovements",
+      "messageTemplates",
+    ].includes(file)
       ? []
       : {};
   }
 }
 
 function writeData(file, data) {
-  fs.writeFileSync(dataPath(file), JSON.stringify(data, null, 2));
+  const filePath = dataPath(file);
+  const tempPath = filePath + ".tmp";
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+    fs.renameSync(tempPath, filePath);
+    return true;
+  } catch (error) {
+    console.error(`Failed to write ${file}:`, error.message);
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (unlinkError) {
+        console.error(
+          `Failed to clean temp file ${tempPath}:`,
+          unlinkError.message,
+        );
+      }
+    }
+    return false;
+  }
 }
 
 function now() {
   return new Date().toISOString();
 }
+
 const AUTOMATION_DEFAULTS = {
   order_confirmation: true,
   payment_confirmation: true,
@@ -44,17 +88,218 @@ const AUTOMATION_DEFAULTS = {
   dispatch: true,
 };
 
+function normalizeNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+const PAYMENT_STATUSES = ["paid", "unpaid", "part_paid", "refunded"];
+
+function paymentRecord(record) {
+  const total = normalizeNumber(record.total, 0);
+  const normalized = { ...record };
+  if (record.paymentStatus === "refunded") {
+    normalized.amountPaid = Number.isFinite(record.amountPaid)
+      ? record.amountPaid
+      : null;
+    normalized.balanceDue = 0;
+    normalized.refundedAmount = Number.isFinite(record.refundedAmount)
+      ? record.refundedAmount
+      : total;
+  } else if (Number.isFinite(record.amountPaid)) {
+    normalized.balanceDue = Math.max(0, total - record.amountPaid);
+  } else if (record.paymentStatus === "paid") {
+    normalized.amountPaid = total;
+    normalized.balanceDue = 0;
+  } else if (record.paymentStatus === "unpaid") {
+    normalized.amountPaid = 0;
+    normalized.balanceDue = total;
+  } else {
+    normalized.amountPaid = null;
+    normalized.balanceDue = null;
+  }
+  return normalized;
+}
+
+function resolvePayment(total, paymentStatus, amountPaid) {
+  if (
+    paymentStatus != null &&
+    !PAYMENT_STATUSES.slice(0, 3).includes(paymentStatus)
+  ) {
+    return { error: "Invalid payment status" };
+  }
+  let paidAmount;
+  if (amountPaid === undefined) {
+    if (paymentStatus === "paid") paidAmount = total;
+    else if (paymentStatus === "unpaid" || paymentStatus == null)
+      paidAmount = 0;
+    else return { error: "amountPaid is required for part-paid transactions" };
+  } else {
+    if (amountPaid === null || amountPaid === "")
+      return {
+        error: "amountPaid must be a finite amount between zero and the total",
+      };
+    paidAmount = Number(amountPaid);
+    if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > total) {
+      return {
+        error: "amountPaid must be a finite amount between zero and the total",
+      };
+    }
+  }
+
+  const inferredStatus =
+    total === 0 || paidAmount === total
+      ? "paid"
+      : paidAmount === 0
+        ? "unpaid"
+        : "part_paid";
+  if (paymentStatus && paymentStatus !== inferredStatus) {
+    return {
+      error: `Payment status must be ${inferredStatus} for this amountPaid`,
+    };
+  }
+  return {
+    paymentStatus: inferredStatus,
+    amountPaid: paidAmount,
+    balanceDue: Math.max(0, total - paidAmount),
+  };
+}
+
+function paymentMetrics(sale) {
+  const total = normalizeNumber(sale.total, 0);
+  const refundedAmount = Math.min(
+    total,
+    normalizeNumber(
+      sale.refundedAmount,
+      sale.paymentStatus === "refunded" ? total : 0,
+    ),
+  );
+  const revenue = Math.max(0, total - refundedAmount);
+  const cost = normalizeNumber(sale.totalCost, 0);
+  const recognizedCost = sale.restockedOnRefund ? 0 : cost;
+  return { revenue, profit: revenue - recognizedCost, cost: recognizedCost };
+}
+
+function notifyPaymentComplete(record) {
+  if (record.paymentStatus !== "paid") return;
+  _simulateOrderMessage(
+    {
+      ...record,
+      id: record.id,
+      orderId: record.orderId || record.id,
+    },
+    "payment_confirmation",
+  );
+}
+
+function aggregateItems(items) {
+  if (!Array.isArray(items)) return [];
+  const map = new Map();
+  for (const item of items) {
+    const productId = item.productId;
+    const qty = normalizeNumber(item.qty, 0);
+    if (!productId || qty <= 0) continue;
+    if (!map.has(productId)) {
+      map.set(productId, {
+        productId,
+        productName: item.productName || "",
+        qty,
+        unitPrice: normalizeNumber(item.unitPrice, 0),
+      });
+      continue;
+    }
+    const existing = map.get(productId);
+    existing.qty += qty;
+    existing.unitPrice = Math.max(
+      existing.unitPrice,
+      normalizeNumber(item.unitPrice, 0),
+    );
+  }
+  return Array.from(map.values());
+}
+
+function recordStockMovement(
+  productId,
+  productName,
+  quantity,
+  notes,
+  type = "deduction",
+) {
+  const movements = readData("stockMovements");
+  movements.push({
+    id: "mov-" + uuidv4().slice(0, 8),
+    productId,
+    productName,
+    type,
+    quantity: Math.abs(Number(quantity) || 0),
+    notes: notes || "",
+    createdAt: now(),
+  });
+  writeData("stockMovements", movements);
+}
+
+function restoreStockOnce(products, movements, items, operationId, notes) {
+  const aggregatedItems = aggregateItems(items);
+  for (const item of aggregatedItems) {
+    if (!products.some((product) => product.id === item.productId)) {
+      return { error: `Product ${item.productId} not found` };
+    }
+  }
+
+  let productsChanged = false;
+  for (const item of aggregatedItems) {
+    const product = products.find((entry) => entry.id === item.productId);
+    const restorationIds = Array.isArray(product.stockRestorationIds)
+      ? product.stockRestorationIds
+      : [];
+    if (restorationIds.includes(operationId)) continue;
+    product.quantity += item.qty;
+    product.stockRestorationIds = [...restorationIds, operationId];
+    productsChanged = true;
+  }
+
+  let movementsChanged = false;
+  for (const item of aggregatedItems) {
+    if (
+      movements.some(
+        (movement) =>
+          movement.operationId === operationId &&
+          movement.productId === item.productId,
+      )
+    )
+      continue;
+    const product = products.find((entry) => entry.id === item.productId);
+    movements.push({
+      id: "mov-" + uuidv4().slice(0, 8),
+      operationId,
+      productId: item.productId,
+      productName: product.name,
+      type: "addition",
+      quantity: item.qty,
+      notes,
+      createdAt: now(),
+    });
+    movementsChanged = true;
+  }
+
+  if (productsChanged && !writeData("products", products))
+    return { error: "Could not save returned inventory" };
+  if (movementsChanged && !writeData("stockMovements", movements))
+    return {
+      error: "Inventory restored; movement log write failed and can be retried",
+    };
+  return { restored: productsChanged };
+}
+
 function automationEnabled(type) {
   const settings = readData("settings");
-  return (
-    (settings.automations || {})[type] !== false &&
-    AUTOMATION_DEFAULTS[type] !== false
-  );
+  const automations =
+    settings && settings.automations ? settings.automations : {};
+  return automations[type] !== false && AUTOMATION_DEFAULTS[type] !== false;
 }
 
 function _simulateOrderMessage(order, type) {
   if (!automationEnabled(type)) return;
-  if (!automationEnabled("thank_you")) return;
   const messages = readData("messages");
   if (
     messages.some(
@@ -107,15 +352,24 @@ app.get("/api/settings", (req, res) => {
 
 app.put("/api/settings", (req, res) => {
   const current = readData("settings");
-  const updated = { ...current, ...req.body };
-  writeData("settings", updated);
-  res.json(updated);
+  const next = {
+    ...current,
+    ...req.body,
+    automations: {
+      ...(current.automations || {}),
+      ...(req.body.automations || {}),
+    },
+  };
+  writeData("settings", next);
+  res.json(next);
 });
 
 // ─── Products ────────────────────────────────────────────────────────────────
 
 app.get("/api/products", (req, res) => {
-  res.json(readData("products"));
+  res.json(
+    readData("products").map(({ stockRestorationIds, ...product }) => product),
+  );
 });
 
 app.post("/api/products", (req, res) => {
@@ -129,16 +383,32 @@ app.post("/api/products", (req, res) => {
     lowStockThreshold,
     description,
   } = req.body;
+
   if (!name || !sku || sellingPrice == null || quantity == null) {
     return res
       .status(400)
       .json({ error: "name, sku, sellingPrice, and quantity are required" });
   }
-  if (sellingPrice < 0 || costPrice < 0 || quantity < 0) {
-    return res
-      .status(400)
-      .json({ error: "Prices and quantity must be non-negative" });
+
+  const parsedCost = normalizeNumber(costPrice, 0);
+  const parsedSelling = normalizeNumber(sellingPrice, NaN);
+  const parsedQuantity = normalizeNumber(quantity, NaN);
+  const parsedThreshold = normalizeNumber(lowStockThreshold, 5);
+
+  if (
+    !Number.isFinite(parsedSelling) ||
+    !Number.isFinite(parsedQuantity) ||
+    parsedCost < 0 ||
+    parsedSelling < 0 ||
+    parsedQuantity < 0 ||
+    parsedThreshold < 0 ||
+    !Number.isInteger(parsedQuantity)
+  ) {
+    return res.status(400).json({
+      error: "Prices, threshold, and quantity must be non-negative and valid",
+    });
   }
+
   const products = readData("products");
   if (products.find((p) => p.sku === sku)) {
     return res.status(400).json({ error: "SKU already exists" });
@@ -148,10 +418,10 @@ app.post("/api/products", (req, res) => {
     name,
     sku,
     category: category || "General",
-    costPrice: Number(costPrice) || 0,
-    sellingPrice: Number(sellingPrice),
-    quantity: Number(quantity),
-    lowStockThreshold: Number(lowStockThreshold) || 5,
+    costPrice: parsedCost,
+    sellingPrice: parsedSelling,
+    quantity: parsedQuantity,
+    lowStockThreshold: parsedThreshold,
     description: description || "",
     createdAt: now(),
   };
@@ -174,16 +444,44 @@ app.put("/api/products/:id", (req, res) => {
     lowStockThreshold,
     description,
   } = req.body;
-  if (sellingPrice != null && sellingPrice < 0)
+
+  if (
+    sellingPrice != null &&
+    (!Number.isFinite(Number(sellingPrice)) || Number(sellingPrice) < 0)
+  )
     return res.status(400).json({ error: "sellingPrice must be non-negative" });
-  if (costPrice != null && costPrice < 0)
+  if (
+    costPrice != null &&
+    (!Number.isFinite(Number(costPrice)) || Number(costPrice) < 0)
+  )
     return res.status(400).json({ error: "costPrice must be non-negative" });
-  if (quantity != null && quantity < 0)
-    return res.status(400).json({ error: "quantity must be non-negative" });
-  // check sku uniqueness if changed
+  if (
+    quantity != null &&
+    (!Number.isFinite(Number(quantity)) ||
+      Number(quantity) < 0 ||
+      !Number.isInteger(Number(quantity)))
+  )
+    return res
+      .status(400)
+      .json({ error: "quantity must be a non-negative integer" });
+  if (
+    lowStockThreshold != null &&
+    (!Number.isFinite(Number(lowStockThreshold)) ||
+      Number(lowStockThreshold) < 0 ||
+      !Number.isInteger(Number(lowStockThreshold)))
+  )
+    return res
+      .status(400)
+      .json({ error: "lowStockThreshold must be a non-negative integer" });
+
   if (sku && sku !== products[idx].sku && products.find((p) => p.sku === sku)) {
     return res.status(400).json({ error: "SKU already in use" });
   }
+
+  const previousQty = products[idx].quantity;
+  const nextQty = quantity != null ? Number(quantity) : previousQty;
+  const quantityDelta = nextQty - previousQty;
+
   products[idx] = {
     ...products[idx],
     ...(name != null && { name }),
@@ -197,6 +495,18 @@ app.put("/api/products/:id", (req, res) => {
     }),
     ...(description != null && { description }),
   };
+
+  if (quantity != null && quantityDelta !== 0) {
+    const deltaType = quantityDelta > 0 ? "addition" : "deduction";
+    recordStockMovement(
+      products[idx].id,
+      products[idx].name,
+      Math.abs(quantityDelta),
+      `Manual quantity adjustment (${quantityDelta > 0 ? "increase" : "decrease"})`,
+      deltaType,
+    );
+  }
+
   writeData("products", products);
   res.json(products[idx]);
 });
@@ -297,7 +607,7 @@ app.post("/api/stock-movements", (req, res) => {
 // ─── Sales ────────────────────────────────────────────────────────────────────
 
 app.get("/api/sales", (req, res) => {
-  res.json(readData("sales"));
+  res.json(readData("sales").map(paymentRecord));
 });
 
 app.post("/api/sales", (req, res) => {
@@ -307,84 +617,90 @@ app.post("/api/sales", (req, res) => {
     items,
     paymentMethod,
     paymentStatus,
+    amountPaid,
     notes,
     orderId,
     discount,
   } = req.body;
   if (!items || !items.length)
     return res.status(400).json({ error: "items array required" });
-  const discountAmount = Number(discount) || 0;
+
+  const discountAmount = normalizeNumber(discount, 0);
   if (!Number.isFinite(discountAmount) || discountAmount < 0)
     return res
       .status(400)
       .json({ error: "Discount must be a non-negative amount" });
 
   const products = readData("products");
+  const normalizedItems = aggregateItems(items);
   const requested = new Map();
 
-  // Validate stock
-  for (const item of items) {
-    if (
-      !Number.isInteger(Number(item.qty)) ||
-      Number(item.qty) < 1 ||
-      !Number.isFinite(Number(item.unitPrice)) ||
-      Number(item.unitPrice) < 0
-    ) {
-      return res.status(400).json({
-        error:
-          "Each item needs a positive whole quantity and non-negative price",
-      });
-    }
-    const p = products.find((p) => p.id === item.productId);
-    if (!p)
+  for (const item of normalizedItems) {
+    if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0 || item.qty < 1)
+      return res
+        .status(400)
+        .json({ error: "Each item needs a positive quantity and valid price" });
+    const product = products.find((p) => p.id === item.productId);
+    if (!product)
       return res
         .status(400)
         .json({ error: `Product ${item.productId} not found` });
     requested.set(
       item.productId,
-      (requested.get(item.productId) || 0) + Number(item.qty),
+      (requested.get(item.productId) || 0) + item.qty,
     );
   }
+
   for (const [productId, qty] of requested) {
     const product = products.find((p) => p.id === productId);
-    if (product.quantity < qty)
+    if (product.quantity < qty) {
       return res.status(400).json({
         error: `Insufficient stock for ${product.name}. Available: ${product.quantity}`,
       });
+    }
   }
 
-  // Deduct stock and create movements
+  const subtotal = normalizedItems.reduce(
+    (sum, item) => sum + item.unitPrice * item.qty,
+    0,
+  );
+  if (discountAmount > subtotal) {
+    return res
+      .status(400)
+      .json({ error: "Discount cannot exceed the sale subtotal" });
+  }
+
   const movements = readData("stockMovements");
   const saleId = "sale-" + uuidv4().slice(0, 8);
-  let subtotal = 0,
-    totalCost = 0;
+  let totalCost = 0;
   const enrichedItems = [];
 
-  for (const item of items) {
+  for (const item of normalizedItems) {
     const pidx = products.findIndex((p) => p.id === item.productId);
-    products[pidx].quantity -= Number(item.qty);
-    subtotal += item.unitPrice * item.qty;
+    products[pidx].quantity -= item.qty;
     const cost = products[pidx].costPrice || 0;
     totalCost += cost * item.qty;
-    enrichedItems.push({ ...item, costPrice: cost });
+    enrichedItems.push({
+      productId: item.productId,
+      productName: products[pidx].name,
+      qty: item.qty,
+      unitPrice: item.unitPrice,
+      costPrice: cost,
+    });
     movements.push({
       id: "mov-" + uuidv4().slice(0, 8),
       productId: item.productId,
       productName: products[pidx].name,
       type: "deduction",
-      quantity: Number(item.qty),
+      quantity: item.qty,
       notes: `Sale ${saleId}`,
       createdAt: now(),
     });
   }
 
-  if (discountAmount > subtotal)
-    return res
-      .status(400)
-      .json({ error: "Discount cannot exceed the sale subtotal" });
-  writeData("products", products);
-  writeData("stockMovements", movements);
-
+  const saleTotal = Math.max(0, subtotal - discountAmount);
+  const payment = resolvePayment(saleTotal, paymentStatus, amountPaid);
+  if (payment.error) return res.status(400).json({ error: payment.error });
   const sale = {
     id: saleId,
     orderId: orderId || null,
@@ -393,20 +709,22 @@ app.post("/api/sales", (req, res) => {
     items: enrichedItems,
     subtotal,
     discount: discountAmount,
-    total: subtotal - discountAmount,
+    total: saleTotal,
     totalCost,
-    grossProfit: subtotal - discountAmount - totalCost,
+    grossProfit: saleTotal - totalCost,
     paymentMethod: paymentMethod || "cash",
-    paymentStatus: paymentStatus || "paid",
+    ...payment,
     notes: notes || "",
     createdAt: now(),
   };
 
   const sales = readData("sales");
   sales.push(sale);
+
+  writeData("products", products);
+  writeData("stockMovements", movements);
   writeData("sales", sales);
 
-  // Auto thank-you message (deduplicated)
   _autoThankYouMessage(sale);
   if (sale.paymentStatus === "paid")
     _simulateOrderMessage(sale, "payment_confirmation");
@@ -414,13 +732,71 @@ app.post("/api/sales", (req, res) => {
   res.status(201).json(sale);
 });
 
+app.put("/api/sales/:id/payment", (req, res) => {
+  const sales = readData("sales");
+  const index = sales.findIndex((sale) => sale.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: "Sale not found" });
+  const sale = paymentRecord(sales[index]);
+  if (sale.paymentStatus === "refunded")
+    return res
+      .status(409)
+      .json({ error: "A refunded sale cannot receive payment" });
+  const linkedOrders = readData("orders");
+  const linkedOrder = linkedOrders.find((order) => order.id === sale.orderId);
+  const knownPaidAmounts = [
+    sale.amountPaid,
+    linkedOrder && linkedOrder.amountPaid,
+  ].filter(Number.isFinite);
+  if (knownPaidAmounts.length === 0 && req.body.amountPaid === undefined)
+    return res.status(400).json({
+      error:
+        "Enter the actual cumulative amount paid for this legacy part-paid sale",
+    });
+
+  const payment = resolvePayment(
+    sale.total,
+    req.body.paymentStatus,
+    req.body.amountPaid,
+  );
+  if (payment.error) return res.status(400).json({ error: payment.error });
+  if (
+    knownPaidAmounts.length &&
+    payment.amountPaid < Math.max(...knownPaidAmounts)
+  )
+    return res.status(400).json({
+      error:
+        "amountPaid cannot be less than the previously recorded amountPaid",
+    });
+  Object.assign(sale, payment);
+  if (req.body.paymentMethod != null)
+    sale.paymentMethod = req.body.paymentMethod;
+  sales[index] = sale;
+  if (!writeData("sales", sales))
+    return res.status(500).json({ error: "Could not save sale payment" });
+
+  const orders = linkedOrders;
+  const orderIndex = orders.findIndex((order) => order.id === sale.orderId);
+  if (orderIndex !== -1) {
+    Object.assign(orders[orderIndex], payment);
+    if (!writeData("orders", orders))
+      return res
+        .status(500)
+        .json({ error: "Sale payment saved but order payment sync failed" });
+  }
+  notifyPaymentComplete(sale);
+  res.json(sale);
+});
+
 function _autoThankYouMessage(sale) {
   const messages = readData("messages");
   const templates = readData("messageTemplates");
   const settings = readData("settings");
-  // Dedup check
   const exists = messages.find(
-    (m) => m.saleId === sale.id && m.type === "thank_you",
+    (m) =>
+      m.type === "thank_you" &&
+      (m.saleId === sale.id ||
+        (sale.orderId && m.orderId === sale.orderId) ||
+        (!sale.orderId && m.saleId === sale.id)),
   );
   if (exists) return;
 
@@ -451,7 +827,7 @@ function _autoThankYouMessage(sale) {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 app.get("/api/orders", (req, res) => {
-  res.json(readData("orders"));
+  res.json(readData("orders").map(paymentRecord));
 });
 
 app.post("/api/orders", (req, res) => {
@@ -461,6 +837,7 @@ app.post("/api/orders", (req, res) => {
     items,
     paymentMethod,
     paymentStatus,
+    amountPaid,
     notes,
   } = req.body;
   if (!items || !items.length)
@@ -488,6 +865,8 @@ app.post("/api/orders", (req, res) => {
   }
 
   const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0);
+  const payment = resolvePayment(total, paymentStatus || "unpaid", amountPaid);
+  if (payment.error) return res.status(400).json({ error: payment.error });
   const order = {
     id: "ord-" + uuidv4().slice(0, 8),
     customerId: customerId || null,
@@ -495,7 +874,7 @@ app.post("/api/orders", (req, res) => {
     items,
     total,
     status: "pending",
-    paymentStatus: paymentStatus || "unpaid",
+    ...payment,
     paymentMethod: paymentMethod || "cash",
     notes: notes || "",
     stockDeducted: false,
@@ -505,9 +884,198 @@ app.post("/api/orders", (req, res) => {
   const orders = readData("orders");
   orders.push(order);
   writeData("orders", orders);
-  if (order.paymentStatus === "paid")
-    _simulateOrderMessage(order, "payment_confirmation");
+  notifyPaymentComplete(order);
   res.status(201).json(order);
+});
+
+app.put("/api/orders/:id/payment", (req, res) => {
+  const orders = readData("orders");
+  const index = orders.findIndex((order) => order.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: "Order not found" });
+  const order = paymentRecord(orders[index]);
+  if (order.paymentStatus === "refunded")
+    return res
+      .status(409)
+      .json({ error: "A refunded order cannot receive payment" });
+  const sales = readData("sales");
+  const linkedSale = sales.find((sale) => sale.orderId === order.id);
+  const knownPaidAmounts = [
+    order.amountPaid,
+    linkedSale && linkedSale.amountPaid,
+  ].filter(Number.isFinite);
+  if (knownPaidAmounts.length === 0 && req.body.amountPaid === undefined)
+    return res.status(400).json({
+      error:
+        "Enter the actual cumulative amount paid for this legacy part-paid order",
+    });
+
+  const payment = resolvePayment(
+    order.total,
+    req.body.paymentStatus,
+    req.body.amountPaid,
+  );
+  if (payment.error) return res.status(400).json({ error: payment.error });
+  if (
+    knownPaidAmounts.length &&
+    payment.amountPaid < Math.max(...knownPaidAmounts)
+  )
+    return res.status(400).json({
+      error:
+        "amountPaid cannot be less than the previously recorded amountPaid",
+    });
+  Object.assign(order, payment);
+  if (req.body.paymentMethod != null)
+    order.paymentMethod = req.body.paymentMethod;
+  orders[index] = order;
+  if (!writeData("orders", orders))
+    return res.status(500).json({ error: "Could not save order payment" });
+
+  const saleIndex = sales.findIndex((sale) => sale.orderId === order.id);
+  if (saleIndex !== -1) {
+    Object.assign(sales[saleIndex], payment);
+    if (!writeData("sales", sales))
+      return res
+        .status(500)
+        .json({ error: "Order payment saved but sale payment sync failed" });
+  }
+  notifyPaymentComplete(order);
+  res.json(order);
+});
+
+function processFullRefund({ sale, order, reason, returnedStock }) {
+  if (returnedStock != null && typeof returnedStock !== "boolean") {
+    return { status: 400, error: "returnedStock must be true or false" };
+  }
+  const saleAlreadyRefunded = sale && sale.paymentStatus === "refunded";
+  const orderAlreadyRefunded = order && order.paymentStatus === "refunded";
+  if (saleAlreadyRefunded && (!order || orderAlreadyRefunded))
+    return { status: 409, error: "This sale has already been refunded" };
+  if (orderAlreadyRefunded && (!sale || saleAlreadyRefunded))
+    return { status: 409, error: "This order has already been refunded" };
+
+  const target = sale || order;
+  if (!target) return { status: 404, error: "Transaction not found" };
+  const normalized = paymentRecord(target);
+  const collected = normalized.amountPaid;
+  if (
+    !saleAlreadyRefunded &&
+    !orderAlreadyRefunded &&
+    (!Number.isFinite(collected) || collected <= 0)
+  )
+    return { status: 409, error: "There is no recorded payment to refund" };
+  if (
+    !saleAlreadyRefunded &&
+    !orderAlreadyRefunded &&
+    sale &&
+    collected < normalizeNumber(sale.total, 0)
+  )
+    return {
+      status: 409,
+      error: "A full sale refund requires the sale to be fully paid",
+    };
+
+  if (returnedStock && order && order.status !== "completed")
+    return {
+      status: 409,
+      error: "Stock can only be returned for a completed order",
+    };
+
+  const items = sale ? sale.items : order.items;
+  const restorationId = `refund:${sale ? sale.id : order.id}`;
+  const products = readData("products");
+  const aggregatedItems = aggregateItems(items);
+  const restorationRecorded =
+    aggregatedItems.length > 0 &&
+    aggregatedItems.every((item) => {
+      const product = products.find((entry) => entry.id === item.productId);
+      return (
+        product &&
+        Array.isArray(product.stockRestorationIds) &&
+        product.stockRestorationIds.includes(restorationId)
+      );
+    });
+  const shouldReturnStock = Boolean(
+    returnedStock === true ||
+    restorationRecorded ||
+    (sale && sale.restockedOnRefund) ||
+    (order && order.restockedOnRefund),
+  );
+  if (shouldReturnStock) {
+    const restoration = restoreStockOnce(
+      products,
+      readData("stockMovements"),
+      items,
+      restorationId,
+      `Refund ${sale ? sale.id : order.id} - goods returned`,
+    );
+    if (restoration.error)
+      return {
+        status: restoration.error.includes("Product ") ? 400 : 500,
+        error: restoration.error,
+      };
+  }
+
+  const refundedAt = now();
+  if (sale) {
+    sale.paymentStatus = "refunded";
+    sale.refundedAmount = sale.total;
+    sale.refundReason =
+      (saleAlreadyRefunded && sale.refundReason) || reason || "Full refund";
+    sale.refundedAt = (saleAlreadyRefunded && sale.refundedAt) || refundedAt;
+    sale.balanceDue = 0;
+    sale.restockedOnRefund = shouldReturnStock;
+  }
+  if (order) {
+    order.paymentStatus = "refunded";
+    order.refundedAmount =
+      (orderAlreadyRefunded && order.refundedAmount) || collected;
+    order.refundReason =
+      (orderAlreadyRefunded && order.refundReason) || reason || "Full refund";
+    order.refundedAt = (orderAlreadyRefunded && order.refundedAt) || refundedAt;
+    order.balanceDue = 0;
+    order.restockedOnRefund = shouldReturnStock;
+    if (shouldReturnStock) order.stockDeducted = false;
+  }
+
+  if (sale) {
+    const sales = readData("sales");
+    const index = sales.findIndex((entry) => entry.id === sale.id);
+    sales[index] = sale;
+    if (!writeData("sales", sales))
+      return { status: 500, error: "Could not save refund" };
+  }
+  if (order) {
+    const orders = readData("orders");
+    const index = orders.findIndex((entry) => entry.id === order.id);
+    orders[index] = order;
+    if (!writeData("orders", orders))
+      return { status: 500, error: "Could not save refund" };
+  }
+  return { data: sale || order };
+}
+
+app.post("/api/sales/:id/refund", (req, res) => {
+  const sales = readData("sales");
+  const sale = sales.find((entry) => entry.id === req.params.id);
+  if (!sale) return res.status(404).json({ error: "Sale not found" });
+  const orders = readData("orders");
+  const order = orders.find((entry) => entry.id === sale.orderId);
+  const result = processFullRefund({ sale, order, ...req.body });
+  if (result.error)
+    return res.status(result.status).json({ error: result.error });
+  res.json(paymentRecord(result.data));
+});
+
+app.post("/api/orders/:id/refund", (req, res) => {
+  const orders = readData("orders");
+  const order = orders.find((entry) => entry.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  const sales = readData("sales");
+  const sale = sales.find((entry) => entry.orderId === order.id);
+  const result = processFullRefund({ sale, order, ...req.body });
+  if (result.error)
+    return res.status(result.status).json({ error: result.error });
+  res.json(paymentRecord(order));
 });
 
 app.put("/api/orders/:id/status", (req, res) => {
@@ -517,8 +1085,36 @@ app.put("/api/orders/:id/status", (req, res) => {
   if (idx === -1) return res.status(404).json({ error: "Order not found" });
 
   const order = orders[idx];
+  if (status === "refunded") {
+    const sale = readData("sales").find(
+      (record) => record.orderId === order.id,
+    );
+    const result = processFullRefund({ sale, order, ...req.body });
+    if (result.error)
+      return res.status(result.status).json({ error: result.error });
+    return res.json(paymentRecord(result.data));
+  }
   const prevStatus = order.status;
   const prevPaymentStatus = order.paymentStatus;
+
+  let paymentUpdate = null;
+  if (paymentStatus != null || req.body.amountPaid != null) {
+    paymentUpdate = resolvePayment(
+      order.total,
+      paymentStatus,
+      req.body.amountPaid,
+    );
+    if (paymentUpdate.error)
+      return res.status(400).json({ error: paymentUpdate.error });
+    if (
+      Number.isFinite(order.amountPaid) &&
+      paymentUpdate.amountPaid < order.amountPaid
+    )
+      return res.status(400).json({
+        error:
+          "amountPaid cannot be less than the previously recorded amountPaid",
+      });
+  }
 
   const validStatuses = [
     "pending",
@@ -527,7 +1123,6 @@ app.put("/api/orders/:id/status", (req, res) => {
     "ready",
     "completed",
     "cancelled",
-    "refunded",
   ];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: "Invalid status" });
@@ -536,7 +1131,7 @@ app.put("/api/orders/:id/status", (req, res) => {
     confirmed: ["processing", "cancelled"],
     processing: ["ready", "cancelled"],
     ready: ["completed", "cancelled"],
-    completed: ["refunded"],
+    completed: [],
     cancelled: [],
     refunded: [],
   };
@@ -544,43 +1139,40 @@ app.put("/api/orders/:id/status", (req, res) => {
     return res
       .status(409)
       .json({ error: `Cannot move an order from ${prevStatus} to ${status}` });
-  if (
-    paymentStatus &&
-    !["paid", "unpaid", "part_paid", "refunded"].includes(paymentStatus)
-  )
+  if (paymentStatus && !["paid", "unpaid", "part_paid"].includes(paymentStatus))
     return res.status(400).json({ error: "Invalid payment status" });
 
-  const products = readData("products");
+  if (paymentUpdate) Object.assign(order, paymentUpdate);
 
-  // Reserve stock on confirmation, including legacy confirmed orders without a reservation flag.
+  const products = readData("products");
+  const aggregatedItems = aggregateItems(order.items);
+
   if (
     ["confirmed", "processing", "ready"].includes(status) &&
     !order.stockDeducted
   ) {
-    for (const item of order.items) {
-      const p = products.find((p) => p.id === item.productId);
-      if (!p)
+    for (const item of aggregatedItems) {
+      const product = products.find((p) => p.id === item.productId);
+      if (!product)
         return res
           .status(400)
           .json({ error: `Product ${item.productId} not found` });
-      const requested = order.items
-        .filter((line) => line.productId === item.productId)
-        .reduce((sum, line) => sum + Number(line.qty), 0);
-      if (p.quantity < requested)
+      if (product.quantity < item.qty)
         return res.status(400).json({
-          error: `Insufficient stock for ${p.name}. Available: ${p.quantity}`,
+          error: `Insufficient stock for ${product.name}. Available: ${product.quantity}`,
         });
     }
+
     const movements = readData("stockMovements");
-    for (const item of order.items) {
+    for (const item of aggregatedItems) {
       const product = products.find((p) => p.id === item.productId);
-      product.quantity -= Number(item.qty);
+      product.quantity -= item.qty;
       movements.push({
         id: "mov-" + uuidv4().slice(0, 8),
         productId: item.productId,
         productName: product.name,
         type: "deduction",
-        quantity: Number(item.qty),
+        quantity: item.qty,
         notes: `Order ${order.id} confirmed - stock reserved`,
         createdAt: now(),
       });
@@ -592,48 +1184,50 @@ app.put("/api/orders/:id/status", (req, res) => {
 
   if (status === "completed" && prevStatus !== "completed") {
     if (!order.stockDeducted) {
-      // Check stock
-      for (const item of order.items) {
-        const p = products.find((p) => p.id === item.productId);
-        if (!p)
+      for (const item of aggregatedItems) {
+        const product = products.find((p) => p.id === item.productId);
+        if (!product)
           return res
             .status(400)
             .json({ error: `Product ${item.productId} not found` });
-        if (p.quantity < item.qty) {
+        if (product.quantity < item.qty)
           return res.status(400).json({
-            error: `Insufficient stock for ${p.name}. Available: ${p.quantity}`,
+            error: `Insufficient stock for ${product.name}. Available: ${product.quantity}`,
           });
-        }
       }
     }
 
-    // Create sale if not already created
     const sales = readData("sales");
     const existingSale = sales.find((s) => s.orderId === order.id);
     if (!existingSale) {
       const movements = readData("stockMovements");
-      let subtotal = 0,
-        totalCost = 0;
+      let subtotal = 0;
+      let totalCost = 0;
       const enrichedItems = [];
 
-      for (const item of order.items) {
-        const pidx = products.findIndex((p) => p.id === item.productId);
+      for (const item of aggregatedItems) {
+        const product = products.find((p) => p.id === item.productId);
         if (!order.stockDeducted) {
-          products[pidx].quantity -= Number(item.qty);
+          product.quantity -= item.qty;
           movements.push({
             id: "mov-" + uuidv4().slice(0, 8),
             productId: item.productId,
-            productName: products[pidx].name,
+            productName: product.name,
             type: "deduction",
-            quantity: Number(item.qty),
+            quantity: item.qty,
             notes: `Order ${order.id} completed`,
             createdAt: now(),
           });
         }
-        subtotal += item.unitPrice * item.qty;
-        const cost = products[pidx].costPrice || 0;
-        totalCost += cost * item.qty;
-        enrichedItems.push({ ...item, costPrice: cost });
+        subtotal += (item.unitPrice || 0) * item.qty;
+        totalCost += (product.costPrice || 0) * item.qty;
+        enrichedItems.push({
+          productId: item.productId,
+          productName: item.productName || product.name,
+          qty: item.qty,
+          unitPrice: item.unitPrice || product.sellingPrice,
+          costPrice: product.costPrice || 0,
+        });
       }
 
       if (!order.stockDeducted) {
@@ -643,6 +1237,7 @@ app.put("/api/orders/:id/status", (req, res) => {
       }
 
       const saleId = "sale-" + uuidv4().slice(0, 8);
+      const orderPayment = paymentRecord(order);
       const sale = {
         id: saleId,
         orderId: order.id,
@@ -654,69 +1249,48 @@ app.put("/api/orders/:id/status", (req, res) => {
         totalCost,
         grossProfit: subtotal - totalCost,
         paymentMethod: paymentMethod || order.paymentMethod,
-        paymentStatus: paymentStatus || order.paymentStatus,
+        paymentStatus: orderPayment.paymentStatus,
+        amountPaid: orderPayment.amountPaid,
+        balanceDue: orderPayment.balanceDue,
         notes: order.notes,
         createdAt: now(),
       };
       sales.push(sale);
       writeData("sales", sales);
       orders[idx].saleId = saleId;
-
-      _autoThankYouMessage(sale);
     }
-  }
 
-  // Handle cancellation: restore stock only if it was deducted
-  if (
-    (status === "cancelled" || status === "refunded") &&
-    order.stockDeducted
-  ) {
-    for (const item of order.items) {
-      const pidx = products.findIndex((p) => p.id === item.productId);
-      if (pidx !== -1) products[pidx].quantity += Number(item.qty);
-    }
-    writeData("products", products);
-    orders[idx].stockDeducted = false;
-
-    const movements = readData("stockMovements");
-    for (const item of order.items) {
-      const p = products.find((p) => p.id === item.productId);
-      movements.push({
-        id: "mov-" + uuidv4().slice(0, 8),
-        productId: item.productId,
-        productName: p ? p.name : item.productName,
-        type: "addition",
-        quantity: Number(item.qty),
-        notes: `Order ${order.id} ${status} - stock restored`,
-        createdAt: now(),
-      });
-    }
-    writeData("stockMovements", movements);
-  }
-
-  if (status === "refunded") {
-    const sales = readData("sales");
-    const sale = sales.find(
-      (record) => record.orderId === order.id || record.id === order.saleId,
+    const completedSale = readData("sales").find(
+      (sale) => sale.orderId === order.id,
     );
-    if (sale) {
-      sale.paymentStatus = "refunded";
-      sale.refundedAt = now();
-      writeData("sales", sales);
-    }
-    orders[idx].paymentStatus = "refunded";
+    if (completedSale) _autoThankYouMessage(completedSale);
+  }
+
+  if (status === "cancelled" && order.stockDeducted) {
+    const restoration = restoreStockOnce(
+      products,
+      readData("stockMovements"),
+      order.items,
+      `cancel:${order.id}`,
+      `Order ${order.id} cancelled - stock restored`,
+    );
+    if (restoration.error)
+      return res
+        .status(restoration.error.includes("Product ") ? 400 : 500)
+        .json({ error: restoration.error });
+    orders[idx].stockDeducted = false;
   }
 
   orders[idx].status = status;
-  if (paymentStatus) orders[idx].paymentStatus = paymentStatus;
   if (paymentMethod) orders[idx].paymentMethod = paymentMethod;
-  writeData("orders", orders);
+  if (!writeData("orders", orders))
+    return res.status(500).json({ error: "Could not save order status" });
   if (status === "confirmed" && prevStatus !== "confirmed")
     _simulateOrderMessage(orders[idx], "order_confirmation");
   if (status === "ready" && prevStatus !== "ready")
     _simulateOrderMessage(orders[idx], "dispatch");
   if (orders[idx].paymentStatus === "paid" && prevPaymentStatus !== "paid")
-    _simulateOrderMessage(orders[idx], "payment_confirmation");
+    notifyPaymentComplete(orders[idx]);
   res.json(orders[idx]);
 });
 
@@ -724,8 +1298,27 @@ app.delete("/api/orders/:id", (req, res) => {
   const orders = readData("orders");
   const idx = orders.findIndex((o) => o.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: "Order not found" });
+
+  const order = orders[idx];
+  if (order.stockDeducted && order.status !== "completed") {
+    const products = readData("products");
+    const movements = readData("stockMovements");
+    const restoration = restoreStockOnce(
+      products,
+      movements,
+      order.items,
+      `delete:${order.id}`,
+      `Order ${order.id} deleted - stock restored`,
+    );
+    if (restoration.error)
+      return res
+        .status(restoration.error.includes("Product ") ? 400 : 500)
+        .json({ error: restoration.error });
+  }
+
   orders.splice(idx, 1);
-  writeData("orders", orders);
+  if (!writeData("orders", orders))
+    return res.status(500).json({ error: "Could not delete order" });
   res.json({ success: true });
 });
 
@@ -831,9 +1424,7 @@ app.delete("/api/message-templates/:id", (req, res) => {
 
 app.get("/api/dashboard", (req, res) => {
   const sales = readData("sales");
-  const recognizedSales = sales.filter(
-    (sale) => sale.paymentStatus !== "refunded",
-  );
+  const recognizedSales = sales;
   const products = readData("products");
   const orders = readData("orders");
 
@@ -841,15 +1432,21 @@ app.get("/api/dashboard", (req, res) => {
   const todaySales = recognizedSales.filter(
     (s) => s.createdAt.slice(0, 10) === todayStr,
   );
-  const todayRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
+  const todayRevenue = todaySales.reduce(
+    (sum, sale) => sum + paymentMetrics(sale).revenue,
+    0,
+  );
   const todayProfit = todaySales.reduce(
-    (sum, s) => sum + (s.grossProfit || 0),
+    (sum, sale) => sum + paymentMetrics(sale).profit,
     0,
   );
 
-  const totalRevenue = recognizedSales.reduce((sum, s) => sum + s.total, 0);
+  const totalRevenue = recognizedSales.reduce(
+    (sum, sale) => sum + paymentMetrics(sale).revenue,
+    0,
+  );
   const totalProfit = recognizedSales.reduce(
-    (sum, s) => sum + (s.grossProfit || 0),
+    (sum, sale) => sum + paymentMetrics(sale).profit,
     0,
   );
 
@@ -870,8 +1467,15 @@ app.get("/api/dashboard", (req, res) => {
           revenue: 0,
         };
       }
-      productSales[item.productId].qty += item.qty;
-      productSales[item.productId].revenue += item.unitPrice * item.qty;
+      if (!sale.restockedOnRefund) productSales[item.productId].qty += item.qty;
+      const metrics = paymentMetrics(sale);
+      const base = sale.items.reduce(
+        (sum, line) => sum + (line.unitPrice || 0) * (line.qty || 0),
+        0,
+      );
+      productSales[item.productId].revenue += base
+        ? (metrics.revenue * item.unitPrice * item.qty) / base
+        : 0;
     }
   }
   const bestSellers = Object.entries(productSales)
@@ -911,51 +1515,72 @@ app.get("/api/analytics", (req, res) => {
   const customers = readData("customers");
   const orders = readData("orders");
 
-  let filteredSales = sales;
+  const now = new Date();
+  let startDate = from ? new Date(from) : null;
+  let endDate = to ? new Date(to + "T23:59:59.999") : null;
+
+  if (days && !from && !to) {
+    startDate = new Date(now.getTime() - Number(days) * 86400000);
+    endDate = now;
+  }
+
+  if (!startDate && !endDate && !days) {
+    startDate = new Date(now.getTime() - 30 * 86400000);
+    endDate = now;
+  }
+
+  let filteredSales = sales.filter((sale) => {
+    const createdAt = new Date(sale.createdAt);
+    if (startDate && createdAt < startDate) return false;
+    if (endDate && createdAt > endDate) return false;
+    return true;
+  });
+
   if (from || to || days) {
-    const now = new Date();
-    const startDate = days
-      ? new Date(now - Number(days) * 86400000)
-      : from
-        ? new Date(from)
-        : new Date(0);
-    const endDate = to ? new Date(to + "T23:59:59") : now;
-    filteredSales = sales.filter((s) => {
-      const d = new Date(s.createdAt);
-      return d >= startDate && d <= endDate;
+    filteredSales = sales.filter((sale) => {
+      const createdAt = new Date(sale.createdAt);
+      if (startDate && createdAt < startDate) return false;
+      if (endDate && createdAt > endDate) return false;
+      return true;
     });
   }
 
-  const recognizedSales = filteredSales.filter(
-    (sale) => sale.paymentStatus !== "refunded",
+  const recognizedSales = filteredSales;
+  const totalRevenue = recognizedSales.reduce(
+    (sum, sale) => sum + paymentMetrics(sale).revenue,
+    0,
   );
-
-  const totalRevenue = recognizedSales.reduce((s, sale) => s + sale.total, 0);
   const totalProfit = recognizedSales.reduce(
-    (s, sale) => s + (sale.grossProfit || 0),
+    (sum, sale) => sum + paymentMetrics(sale).profit,
     0,
   );
   const totalCost = recognizedSales.reduce(
-    (s, sale) => s + (sale.totalCost || 0),
+    (sum, sale) => sum + paymentMetrics(sale).cost,
     0,
   );
   const avgOrderValue = recognizedSales.length
     ? totalRevenue / recognizedSales.length
     : 0;
 
-  // Revenue by day (last 30 days default)
   const dayMap = {};
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    dayMap[d.toISOString().slice(0, 10)] = { revenue: 0, profit: 0, count: 0 };
+  const startFill =
+    startDate && !days
+      ? new Date(startDate)
+      : new Date(now.getTime() - 29 * 86400000);
+  const endFill = endDate || now;
+  const dateCursor = new Date(startFill);
+  while (dateCursor <= endFill) {
+    const key = dateCursor.toISOString().slice(0, 10);
+    dayMap[key] = { revenue: 0, profit: 0, count: 0 };
+    dateCursor.setDate(dateCursor.getDate() + 1);
   }
   for (const sale of recognizedSales) {
     const day = sale.createdAt.slice(0, 10);
     if (dayMap[day]) {
-      dayMap[day].revenue += sale.total;
-      dayMap[day].profit += sale.grossProfit || 0;
-      dayMap[day].count += 1;
+      const metrics = paymentMetrics(sale);
+      dayMap[day].revenue += metrics.revenue;
+      dayMap[day].profit += metrics.profit;
+      if (metrics.revenue > 0) dayMap[day].count += 1;
     }
   }
   const revenueByDay = Object.entries(dayMap).map(([date, data]) => ({
@@ -963,44 +1588,83 @@ app.get("/api/analytics", (req, res) => {
     ...data,
   }));
 
-  // Product sales
   const productSalesMap = {};
+  for (const product of products) {
+    productSalesMap[product.id] = {
+      id: product.id,
+      name: product.name,
+      qty: 0,
+      revenue: 0,
+      cost: 0,
+      profit: 0,
+    };
+  }
   for (const sale of recognizedSales) {
+    const saleSubtotal = sale.items.reduce(
+      (sum, item) => sum + (item.unitPrice || 0) * (item.qty || 0),
+      0,
+    );
+    const saleRevenue = paymentMetrics(sale).revenue;
     for (const item of sale.items) {
+      const nextValue = (item.unitPrice || 0) * (item.qty || 0);
+      const itemRevenue =
+        saleSubtotal > 0 ? (nextValue / saleSubtotal) * saleRevenue : 0;
+      const itemCost = sale.restockedOnRefund
+        ? 0
+        : (item.costPrice || 0) * (item.qty || 0);
       if (!productSalesMap[item.productId]) {
         productSalesMap[item.productId] = {
+          id: item.productId,
           name: item.productName,
           qty: 0,
           revenue: 0,
           cost: 0,
+          profit: 0,
         };
       }
-      productSalesMap[item.productId].qty += item.qty;
-      productSalesMap[item.productId].revenue += item.unitPrice * item.qty;
-      productSalesMap[item.productId].cost += (item.costPrice || 0) * item.qty;
+      if (!sale.restockedOnRefund)
+        productSalesMap[item.productId].qty += item.qty;
+      productSalesMap[item.productId].revenue += itemRevenue;
+      productSalesMap[item.productId].cost += itemCost;
+      productSalesMap[item.productId].profit += itemRevenue - itemCost;
     }
   }
-  const productStats = Object.entries(productSalesMap)
-    .map(([id, d]) => ({ id, ...d, profit: d.revenue - d.cost }))
+  const productStats = Object.values(productSalesMap)
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      qty: entry.qty,
+      revenue: entry.revenue,
+      cost: entry.cost,
+      profit: entry.profit,
+    }))
     .sort((a, b) => b.revenue - a.revenue);
 
   const bestSellers = productStats.slice(0, 5);
-  const slowMovers = productStats.slice(-5).reverse();
+  const slowMovers = [...productStats]
+    .sort((a, b) => a.qty - b.qty)
+    .slice(0, 5);
 
-  // Category revenue
   const categoryMap = {};
   for (const sale of recognizedSales) {
+    const saleSubtotal = sale.items.reduce(
+      (sum, item) => sum + (item.unitPrice || 0) * (item.qty || 0),
+      0,
+    );
+    const saleRevenue = paymentMetrics(sale).revenue;
     for (const item of sale.items) {
-      const p = products.find((p) => p.id === item.productId);
-      const cat = p ? p.category : "Unknown";
-      categoryMap[cat] = (categoryMap[cat] || 0) + item.unitPrice * item.qty;
+      const product = products.find((p) => p.id === item.productId);
+      const cat = product ? product.category : "Unknown";
+      const lineValue = (item.unitPrice || 0) * (item.qty || 0);
+      categoryMap[cat] =
+        (categoryMap[cat] || 0) +
+        (saleSubtotal > 0 ? (lineValue / saleSubtotal) * saleRevenue : 0);
     }
   }
   const revenueByCategory = Object.entries(categoryMap).map(
     ([category, revenue]) => ({ category, revenue }),
   );
 
-  // Inventory valuation
   const inventoryValuation = products.map((p) => ({
     id: p.id,
     name: p.name,
@@ -1015,7 +1679,6 @@ app.get("/api/analytics", (req, res) => {
     0,
   );
 
-  // Customer activity
   const custMap = {};
   for (const sale of recognizedSales) {
     if (!sale.customerId) continue;
@@ -1028,7 +1691,7 @@ app.get("/api/analytics", (req, res) => {
         lastPurchase: null,
       };
     }
-    custMap[sale.customerId].totalSpent += sale.total;
+    custMap[sale.customerId].totalSpent += paymentMetrics(sale).revenue;
     custMap[sale.customerId].purchases += 1;
     if (
       !custMap[sale.customerId].lastPurchase ||

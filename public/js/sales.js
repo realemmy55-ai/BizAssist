@@ -3,6 +3,31 @@ let _saleProducts = [];
 let _saleCustomers = [];
 let _saleItems = [];
 
+function salesFinancialMetrics(sale) {
+  const total = Number(sale.total) || 0;
+  const refundedAmount = Math.min(
+    total,
+    Number(
+      sale.refundedAmount ?? (sale.paymentStatus === "refunded" ? total : 0),
+    ) || 0,
+  );
+  const revenue = Math.max(0, total - refundedAmount);
+  const cost = sale.restockedOnRefund ? 0 : Number(sale.totalCost) || 0;
+  return { revenue, profit: revenue - cost };
+}
+
+function salesFinancialTotals(sales) {
+  return sales.reduce(
+    (totals, sale) => {
+      const metrics = salesFinancialMetrics(sale);
+      totals.revenue += metrics.revenue;
+      totals.profit += metrics.profit;
+      return totals;
+    },
+    { revenue: 0, profit: 0 },
+  );
+}
+
 async function loadSales() {
   const content = document.getElementById("app-content");
   content.innerHTML =
@@ -25,6 +50,11 @@ function renderSales(search = "", payment = "") {
   const recognizedSales = _salesRecords.filter(
     (sale) => sale.paymentStatus !== "refunded",
   );
+  const financialTotals = salesFinancialTotals(_salesRecords);
+  const unknownBalances = _salesRecords.filter(
+    (sale) =>
+      sale.paymentStatus === "part_paid" && !Number.isFinite(sale.balanceDue),
+  ).length;
   const sorted = [..._salesRecords].sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
   );
@@ -44,15 +74,19 @@ function renderSales(search = "", payment = "") {
     </div>
     <div class="stat-grid">
       <div class="stat-card primary"><div class="stat-label">Recorded sales</div><div class="stat-value">${recognizedSales.length}</div><div class="stat-sub">Refunds excluded</div></div>
-      <div class="stat-card success"><div class="stat-label">Gross revenue</div><div class="stat-value">${sym}${recognizedSales.reduce((sum, sale) => sum + sale.total, 0).toLocaleString()}</div><div class="stat-sub">After discounts, excluding refunds</div></div>
-      <div class="stat-card"><div class="stat-label">Gross profit</div><div class="stat-value">${sym}${recognizedSales.reduce((sum, sale) => sum + (sale.grossProfit || 0), 0).toLocaleString()}</div><div class="stat-sub">Revenue less recorded product costs</div></div>
+      <div class="stat-card success"><div class="stat-label">Net revenue</div><div class="stat-value">${sym}${financialTotals.revenue.toLocaleString()}</div><div class="stat-sub">After discounts and refunds</div></div>
+      <div class="stat-card"><div class="stat-label">Net profit</div><div class="stat-value">${sym}${financialTotals.profit.toLocaleString()}</div><div class="stat-sub">Includes cost of refunded goods not returned</div></div>
       <div class="stat-card warning"><div class="stat-label">Unpaid / part-paid sales value</div><div class="stat-value">${sym}${_salesRecords
         .filter(
           (sale) =>
             sale.paymentStatus !== "paid" && sale.paymentStatus !== "refunded",
         )
-        .reduce((sum, sale) => sum + sale.total, 0)
-        .toLocaleString()}</div><div class="stat-sub">Full sale totals; amount due is not tracked yet</div></div>
+        .reduce(
+          (sum, sale) =>
+            sum + (Number.isFinite(sale.balanceDue) ? sale.balanceDue : 0),
+          0,
+        )
+        .toLocaleString()}${unknownBalances ? ` · ${unknownBalances} unknown` : ""}</div><div class="stat-sub">Unknown legacy balances are not included in the numeric total</div></div>
     </div>
     <div class="toolbar">
       <div class="search-wrap"><span class="search-icon">⌕</span><input id="salesSearch" class="search-input" placeholder="Search sale or customer" value="${search}" /></div>
@@ -85,19 +119,65 @@ function renderSalesTable(sales, sym) {
     return;
   }
   table.innerHTML = `<table>
-    <thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th>Items</th><th>Total</th><th>Profit</th><th>Payment</th><th>Method</th></tr></thead>
+    <thead><tr><th>Date</th><th>Reference</th><th>Customer</th><th>Items</th><th>Total</th><th>Paid</th><th>Balance</th><th>Profit</th><th>Payment</th><th>Method</th><th>Actions</th></tr></thead>
     <tbody>${sales
       .map(
         (sale) => `<tr>
       <td>${formatDate(sale.createdAt)}</td><td><code>${sale.id}</code></td>
       <td>${sale.customerName}</td><td>${sale.items.reduce((sum, item) => sum + Number(item.qty), 0)} units</td>
       <td><strong>${sym}${sale.total.toLocaleString()}</strong></td>
-      <td>${sym}${(sale.grossProfit || 0).toLocaleString()}</td>
+      <td>${Number.isFinite(sale.amountPaid) ? `${sym}${sale.amountPaid.toLocaleString()}` : "Unknown"}</td>
+      <td>${Number.isFinite(sale.balanceDue) ? `${sym}${sale.balanceDue.toLocaleString()}` : "Unknown"}</td>
+      <td>${sym}${salesFinancialMetrics(sale).profit.toLocaleString()}</td>
       <td>${paymentBadge(sale.paymentStatus)}</td><td>${formatPaymentMethod(sale.paymentMethod)}</td>
+      <td>${sale.paymentStatus === "refunded" ? "" : `<button class="btn btn-sm btn-outline" onclick="recordSalePayment('${sale.id}')">Payment</button> <button class="btn btn-sm btn-danger" onclick="refundSale('${sale.id}')">Refund</button>`}</td>
     </tr>`,
       )
       .join("")}</tbody>
   </table>`;
+}
+
+async function recordSalePayment(saleId) {
+  const sale = _salesRecords.find((record) => record.id === saleId);
+  if (!sale) return;
+  const current = Number.isFinite(sale.amountPaid)
+    ? String(sale.amountPaid)
+    : "";
+  const amount = window.prompt(
+    current
+      ? "Total amount paid to date"
+      : "Legacy payment amount is unknown. Enter the actual cumulative amount paid",
+    current,
+  );
+  if (amount === null) return;
+  if (amount.trim() === "" || !Number.isFinite(Number(amount))) {
+    showToast("Enter the actual cumulative amount paid", "error");
+    return;
+  }
+  try {
+    await API.put(`/api/sales/${saleId}/payment`, {
+      amountPaid: Number(amount),
+    });
+    await loadSales();
+    showToast("Payment updated", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function refundSale(saleId) {
+  const returnedStock = window.confirm(
+    "Were the goods physically returned? Choose Cancel if they were not returned.",
+  );
+  const reason = window.prompt("Refund reason", "Full refund");
+  if (reason === null) return;
+  try {
+    await API.post(`/api/sales/${saleId}/refund`, { reason, returnedStock });
+    await loadSales();
+    showToast("Refund recorded", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
 
 function openRecordSaleModal() {
@@ -111,6 +191,9 @@ function openRecordSaleModal() {
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label" for="salePaymentStatus">Payment status</label><select class="form-select" id="salePaymentStatus"><option value="paid">Paid</option><option value="part_paid">Part paid</option><option value="unpaid">Unpaid</option></select></div>
+        <div class="form-group"><label class="form-label" for="saleAmountPaid">Total paid to date (${sym})</label><input class="form-input" id="saleAmountPaid" type="number" min="0" step="0.01" placeholder="Defaults from payment status" /></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label class="form-label" for="saleDiscount">Discount (${sym})</label><input class="form-input" id="saleDiscount" type="number" min="0" step="1" value="0" /></div>
       </div>
       <div class="form-row sale-picker">
@@ -151,6 +234,10 @@ function openRecordSaleModal() {
         discount,
         paymentMethod: document.getElementById("salePaymentMethod").value,
         paymentStatus: document.getElementById("salePaymentStatus").value,
+        amountPaid:
+          document.getElementById("saleAmountPaid").value === ""
+            ? undefined
+            : Number(document.getElementById("saleAmountPaid").value),
         notes: document.getElementById("saleNotes").value.trim(),
       });
       showToast("Sale recorded and inventory updated", "success");
